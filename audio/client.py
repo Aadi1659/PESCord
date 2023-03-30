@@ -25,7 +25,7 @@ def send_message(client_socket):
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
 # connect the socket to the server's IP address and port
-server_address = ('localhost', 12336)
+server_address = ('192.168.70.62', 12337)
 client_socket.connect(server_address)
 
 # start a new thread to receive messages from the server

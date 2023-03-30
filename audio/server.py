@@ -2,9 +2,14 @@ import pyaudio
 import socket
 import threading
 import random
+import pulsectl
+import sounddevice as sd
+import numpy as np
+import time
 
-HOST = 'localhost'
-PORT = 12336
+
+HOST = '0.0.0.0'
+PORT = 12337
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -13,8 +18,7 @@ server_socket.bind((HOST, PORT))
 server_socket.listen(5)
 
 # Define audio parameters
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
+CHANNELS = 2
 RATE = 44100
 CHUNK = 1024
 
@@ -70,8 +74,8 @@ def handle_client(client_socket, client_address):
                 recipient[0].send(message)
 
                 # Wait for the recipient to accept the call
-                response = recipient[0].recv(1024).decode()
-                if response != f"accept {port_number}":
+                response = recipient[0].recv(1024).decode().strip()
+                if response != f"accept":
                     raise ValueError("Call rejected by recipient")
 
                 # Start the audio call
@@ -97,19 +101,41 @@ def handle_client(client_socket, client_address):
     # Close the client socket
     client_socket.close()
 
+import pulsectl
 
 def handle_audio_call(sender_socket, sender_name, recipient_socket, recipient_name, port_number):
-    # Create a PyAudio object
-    p = pyaudio.PyAudio()
+    # Create a PulseAudio object
+    pulse = pulsectl.Pulse('my-client')
 
-    # Open a new microphone stream for the sender
-    sender_stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, input=True, frames_per_buffer=CHUNK)
+    # Find the default input and output devices
+    source = pulse.source_list()[0]
+    sink = pulse.sink_list()[0]
 
-    # Open a new speaker stream for the recipient
-    recipient_stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE, output=True)
+    # Set the source and sink volumes to 100%
+    pulse.volume_set(source, 0x10000)
+    pulse.volume_set(sink, 0x10000)
 
-    # Connect to the recipient's socket
-    recipient_socket.connect(('localhost', port_number))
+    # Create a new stream for the sender
+    sender_stream = pulse.source_output_new(
+        source_name=source.name,
+        stream_name=f'{sender_name} to {recipient_name}',
+        sample_spec=pulsectl.PulseSampleSpec(format='s16le', rate=RATE, channels=CHANNELS),
+        channel_map=pulsectl.PulseChannelMap.from_mask(0x1),
+        flags=pulsectl.PulseStreamFlags.START_CORKED,
+    )
+
+    # Connect the sender's stream to the default sink
+    pulse.source_output_move(sender_stream.index, sink.index)
+
+    # Create a new stream for the recipient
+    recipient_stream = pulse.stream_new(
+        stream_name=f'{recipient_name} to {sender_name}',
+        sample_spec=pulsectl.PulseSampleSpec(format='s16le', rate=RATE, channels=CHANNELS),
+        channel_map=pulsectl.PulseChannelMap.from_mask(0x1),
+    )
+
+    # Connect the recipient's stream to the default source
+    pulse.stream_connect_playback(recipient_stream.index, sink.name)
 
     # Add the sender's socket to the list of active calls
     active_calls[sender_socket] = recipient_socket
@@ -119,17 +145,20 @@ def handle_audio_call(sender_socket, sender_name, recipient_socket, recipient_na
     message = f"Audio call started with {recipient_name} on port {port_number}".encode()
     sender_socket.send(message)
 
+    # Start the sender's stream
+    pulse.source_output_cork(sender_stream.index, False)
+
     while True:
         try:
             # Receive audio data from the sender
-            data = sender_stream.read(CHUNK)
+            data = sender_socket.recv(CHUNK)
 
             # If no data is received, assume the sender has disconnected
             if not data:
                 raise Exception("Sender disconnected")
 
-            # Play the audio data for the recipient
-            recipient_stream.write(data)
+            # Write the audio data to the recipient's stream
+            pulse.stream_write(recipient_stream.index, data)
 
         except:
             # If an exception is raised, assume the call has ended
@@ -137,9 +166,8 @@ def handle_audio_call(sender_socket, sender_name, recipient_socket, recipient_na
             sender_socket.send(message)
             recipient_socket.send(message)
 
-            # Close the streams and remove the sockets from the list of active calls
-            sender_stream.close()
-            recipient_stream.close()
+            # Stop the sender's stream and remove the sockets from the list of active calls
+            pulse.source_output_cork(sender_stream.index, True)
             del active_calls[sender_socket]
             del active_calls[recipient_socket]
 
@@ -147,8 +175,9 @@ def handle_audio_call(sender_socket, sender_name, recipient_socket, recipient_na
             print(f"Audio call ended between {sender_name} and {recipient_name}")
             break
 
-    # Terminate the PyAudio object
-    p.terminate()
+    # Disconnect the recipient's stream and destroy the PulseAudio object
+    pulse.stream_disconnect(recipient_stream.index)
+    pulse.close()
 
 
 print(f"Server listening on {HOST}:{PORT}")
