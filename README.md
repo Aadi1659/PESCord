@@ -7,4 +7,4 @@ This project was developed as a group project as an assignment project under the
 
 NOTE: Audio implementation is in progress
 
-Created by Aaditya Dev Sharma, Abhishek V Sagarnal, Aayush Kumar
+Created by Aaditya Dev Sharma, <a href="https://github.com/AbhishekVSagarnal">Abhishek V Sagarnal</a> , <a href="https://github.com/AKsiggy">Aayush Kumar</a>
