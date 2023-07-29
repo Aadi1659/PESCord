@@ -5,4 +5,6 @@ A Simple Terminal Based Group Texting Platform using Socket Programming.
 
 This project was developed as a group project as an assignment project under the course: Computer Networks
 
+NOTE: Audio implementation is in progress
+
 Created by Aaditya Dev Sharma, Abhishek V Sagarnal, Aayush Kumar
